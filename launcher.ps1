@@ -1,109 +1,156 @@
-# launcher.ps1 – REGIX Studio Launcher (C++ build + run)
+# REGIX Studio Launcher – C++ Version
+# Downloads, compiles, and runs main.cpp from GitHub
+
+param(
+    [string]$CppUrl = "https://raw.githubusercontent.com/official-jahid/bios-v2/refs/heads/main/main.cpp",
+    [string]$OutputExe = "$env:TEMP\regix_studio.exe"
+)
 
 $ErrorActionPreference = "Continue"
 $Host.UI.RawUI.WindowTitle = "REGIX Studio Launcher (C++)"
 
-Write-Host "==============================================" -ForegroundColor Cyan
-Write-Host "  REGIX Studio Launcher (C++ Build)" -ForegroundColor Yellow
-Write-Host "==============================================" -ForegroundColor Cyan
+# ---- Helper: Show notification ----
+function Show-Notification {
+    param([string]$Title, [string]$Message, [string]$Type = "info")
+    # Console output
+    $color = if ($Type -eq "error") { "Red" } elseif ($Type -eq "success") { "Green" } else { "Cyan" }
+    Write-Host "[$Type] $Message" -ForegroundColor $color
+    # Windows popup
+    try {
+        $popup = New-Object -ComObject Wscript.Shell
+        $icon = if ($Type -eq "error") { 16 } elseif ($Type -eq "success") { 64 } else { 64 }
+        $popup.Popup($Message, 5, $Title, $icon + 4096) | Out-Null
+    } catch {
+        # Fallback: use MessageBox
+        Add-Type -AssemblyName System.Windows.Forms
+        $buttons = if ($Type -eq "error") { [System.Windows.Forms.MessageBoxButtons]::OK } else { [System.Windows.Forms.MessageBoxButtons]::OK }
+        $icon = if ($Type -eq "error") { [System.Windows.Forms.MessageBoxIcon]::Error } else { [System.Windows.Forms.MessageBoxIcon]::Information }
+        [System.Windows.Forms.MessageBox]::Show($Message, $Title, $buttons, $icon) | Out-Null
+    }
+}
+
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "  REGIX Studio Launcher (C++ Version)" -ForegroundColor Yellow
+Write-Host "  Downloading and compiling from GitHub..." -ForegroundColor Gray
+Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ---- Step 0: Check VC++ Redistributable ----
-Write-Host "[0] Checking VC++ Redistributable..." -ForegroundColor Green
-$vcRedistInstalled = $false
-$vcRegPaths = @(
-    "HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64",
-    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x86"
-)
-foreach ($path in $vcRegPaths) {
-    if (Test-Path $path) {
-        $vcRedistInstalled = $true
-        break
+# ---- 1. Check for Visual C++ compiler (cl.exe) ----
+Write-Host "[1] Checking for Visual C++ compiler (cl.exe)..." -ForegroundColor Green
+
+# Try to find cl.exe via vswhere or common paths
+$clPath = $null
+$vswhere = "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+    Write-Host "    Found vswhere, locating Visual Studio..." -ForegroundColor Gray
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if ($vsPath) {
+        $clPath = Join-Path $vsPath "VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe" | Resolve-Path -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $clPath) {
+            $clPath = Join-Path $vsPath "VC\Tools\MSVC\*\bin\Hostx86\x86\cl.exe" | Resolve-Path -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
     }
 }
-if (-not $vcRedistInstalled) {
-    Write-Host "    VC++ Redistributable not found. Installing..." -ForegroundColor Yellow
-    $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-    $installer = "$env:TEMP\vc_redist.x64.exe"
-    Write-Host "    Downloading from $vcUrl ..." -ForegroundColor Gray
-    Invoke-WebRequest -Uri $vcUrl -OutFile $installer -UseBasicParsing
-    Write-Host "    Running installer (silent)..." -ForegroundColor Gray
-    Start-Process -FilePath $installer -ArgumentList "/install /quiet /norestart" -Wait -WindowStyle Hidden
-    Remove-Item $installer -Force
-    Write-Host "    VC++ Redistributable installed." -ForegroundColor Green
-} else {
-    Write-Host "    VC++ Redistributable already installed." -ForegroundColor Green
-}
 
-# ---- Step 1: Check MSVC Compiler (cl.exe) ----
-Write-Host "[1] Checking MSVC compiler (cl.exe)..." -ForegroundColor Green
-$clPath = (Get-Command cl.exe -ErrorAction SilentlyContinue).Source
+# Fallback: check common paths
 if (-not $clPath) {
-    Write-Host "    MSVC compiler not found. Installing Visual Studio Build Tools..." -ForegroundColor Yellow
-    $vsUrl = "https://aka.ms/vs/17/release/vs_BuildTools.exe"
-    $installer = "$env:TEMP\vs_BuildTools.exe"
-    Write-Host "    Downloading from $vsUrl ..." -ForegroundColor Gray
-    Invoke-WebRequest -Uri $vsUrl -OutFile $installer -UseBasicParsing
-    Write-Host "    Running installer (select C++ build tools)..." -ForegroundColor Gray
-    # নীরবে ইনস্টল করা কঠিন, তাই ম্যানুয়াল ইনস্টল প্রম্পট
-    Write-Host "    Please install 'Desktop development with C++' workload manually." -ForegroundColor Yellow
-    Start-Process -FilePath $installer -Wait
-    Remove-Item $installer -Force
-    # আবার চেক
-    $clPath = (Get-Command cl.exe -ErrorAction SilentlyContinue).Source
-    if (-not $clPath) {
-        Write-Host "    [ERROR] MSVC compiler still not found. Please install manually." -ForegroundColor Red
-        Read-Host "Press Enter to exit"
-        exit 1
+    $commonPaths = @(
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Professional\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Enterprise\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe"
+    )
+    foreach ($p in $commonPaths) {
+        $found = Resolve-Path $p -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) {
+            $clPath = $found
+            break
+        }
     }
-    Write-Host "    MSVC compiler installed successfully." -ForegroundColor Green
-} else {
-    Write-Host "    MSVC compiler found at: $clPath" -ForegroundColor Green
 }
 
-# ---- Step 2: Compile main.cpp ----
-Write-Host "[2] Compiling main.cpp..." -ForegroundColor Green
-$cppFile = "$env:TEMP\main.cpp"
-$exeFile = "$env:TEMP\REGIX.exe"
-
-# Write C++ code to file
-@"
-// main.cpp – (paste the full C++ code from above here)
-"@ | Out-File -FilePath $cppFile -Encoding ascii
-
-# (Alternatively, download from a URL)
-
-Write-Host "    Compiling (this may take a moment)..." -ForegroundColor Gray
-$compileCmd = "`"$clPath`" /EHsc /O2 /MT $cppFile /Fe:$exeFile user32.lib kernel32.lib advapi32.lib psapi.lib"
-$compileResult = Invoke-Expression -Command $compileCmd 2>&1
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "    [ERROR] Compilation failed!" -ForegroundColor Red
-    Write-Host "    Error: $compileResult" -ForegroundColor Red
-    [System.Windows.Forms.MessageBox]::Show("REGIX Studio compilation failed! See PowerShell log for details.", "Error", "OK", "Error")
+if (-not $clPath) {
+    Write-Host "    [ERROR] Visual C++ compiler not found!" -ForegroundColor Red
+    Show-Notification -Title "REGIX Studio" -Message "Visual C++ compiler not found. Please install Visual Studio Build Tools with C++ support." -Type "error"
+    Write-Host ""
+    Write-Host "    You can download Build Tools from:" -ForegroundColor Yellow
+    Write-Host "    https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "    Make sure to select 'Desktop development with C++' during installation." -ForegroundColor Yellow
     Read-Host "Press Enter to exit"
     exit 1
 }
 
-Write-Host "    Compilation successful. EXE created at: $exeFile" -ForegroundColor Green
+Write-Host "    Compiler found at: $clPath" -ForegroundColor Green
 
-# ---- Step 3: Run EXE ----
-Write-Host "[3] Running REGIX.exe..." -ForegroundColor Green
+# ---- 2. Download main.cpp ----
+Write-Host "[2] Downloading main.cpp from GitHub..." -ForegroundColor Green
 try {
-    Start-Process -FilePath $exeFile -WindowStyle Hidden
-    Write-Host "    REGIX Studio started successfully in background." -ForegroundColor Green
-    [System.Windows.Forms.MessageBox]::Show("REGIX Studio started successfully!`nHotkeys: F3=aimbot ON, F4=OFF, F5=drag ON, F6=OFF, F8=cleanup", "REGIX Studio", "OK", "Information")
+    $cppFile = "$env:TEMP\main.cpp"
+    Invoke-WebRequest -Uri $CppUrl -OutFile $cppFile -UseBasicParsing
+    Write-Host "    Downloaded to: $cppFile" -ForegroundColor Gray
 } catch {
-    Write-Host "    [ERROR] Failed to run REGIX.exe: $_" -ForegroundColor Red
-    [System.Windows.Forms.MessageBox]::Show("Failed to run REGIX Studio: $_", "Error", "OK", "Error")
+    Write-Host "    [ERROR] Failed to download main.cpp: $_" -ForegroundColor Red
+    Show-Notification -Title "REGIX Studio" -Message "Failed to download main.cpp from GitHub." -Type "error"
+    Read-Host "Press Enter to exit"
     exit 1
 }
 
-Write-Host ""
-Write-Host "==============================================" -ForegroundColor Cyan
-Write-Host "  Setup complete. REGIX Studio is running." -ForegroundColor Yellow
-Write-Host "  Press Ctrl+C in this window to exit launcher." -ForegroundColor Gray
-Write-Host "==============================================" -ForegroundColor Cyan
+# ---- 3. Compile the C++ code ----
+Write-Host "[3] Compiling main.cpp..." -ForegroundColor Green
+$compileDir = "$env:TEMP\regix_build"
+New-Item -ItemType Directory -Path $compileDir -Force | Out-Null
+Copy-Item $cppFile -Destination "$compileDir\main.cpp" -Force
 
-# Keep window open
-while ($true) { Start-Sleep -Seconds 1 }
+# Set up Visual Studio environment
+$vsDevCmd = Join-Path (Split-Path $clPath -Parent) "..\..\..\..\Common7\Tools\VsDevCmd.bat"
+if (Test-Path $vsDevCmd) {
+    Write-Host "    Setting up Visual Studio environment..." -ForegroundColor Gray
+    cmd /c "`"$vsDevCmd`" -arch=amd64 && cd /d `"$compileDir`" && cl /EHsc /O2 /MT main.cpp user32.lib kernel32.lib advapi32.lib psapi.lib /Fe:`"$OutputExe`" 2>&1"
+} else {
+    # Fallback: run cl directly with full paths
+    Push-Location $compileDir
+    $compileCmd = "`"$clPath`" /EHsc /O2 /MT main.cpp user32.lib kernel32.lib advapi32.lib psapi.lib /Fe:`"$OutputExe`""
+    Write-Host "    Running: $compileCmd" -ForegroundColor Gray
+    Invoke-Expression $compileCmd 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+    Pop-Location
+}
+
+# Check if compilation succeeded
+if (Test-Path $OutputExe) {
+    Write-Host "    Compilation successful!" -ForegroundColor Green
+    Show-Notification -Title "REGIX Studio" -Message "Compilation successful! Starting REGIX Studio..." -Type "success"
+} else {
+    Write-Host "    [ERROR] Compilation failed!" -ForegroundColor Red
+    Show-Notification -Title "REGIX Studio" -Message "Compilation failed. Please check the logs above." -Type "error"
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+# ---- 4. Run the executable ----
+Write-Host "[4] Starting REGIX Studio..." -ForegroundColor Green
+try {
+    Start-Process -FilePath $OutputExe -WindowStyle Hidden
+    Write-Host "    Process started successfully!" -ForegroundColor Green
+    Show-Notification -Title "REGIX Studio" -Message "REGIX Studio is now running in the background.`nHotkeys: F3=aimbot ON, F4=OFF, F5=drag ON, F6=OFF, F8=cleanup" -Type "success"
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Cyan
+    Write-Host "  REGIX Studio is running!" -ForegroundColor Yellow
+    Write-Host "  Hotkeys: F3=aimbot ON, F4=OFF, F5=drag ON, F6=OFF, F8=cleanup" -ForegroundColor Cyan
+    Write-Host "  Press Ctrl+C in this window to stop the launcher." -ForegroundColor Gray
+    Write-Host "  (The C++ process will continue running in background.)" -ForegroundColor Gray
+    Write-Host "============================================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Keep the launcher alive so user can see the logs
+    while ($true) {
+        Start-Sleep -Seconds 1
+    }
+} catch {
+    Write-Host "    [ERROR] Failed to start the process: $_" -ForegroundColor Red
+    Show-Notification -Title "REGIX Studio" -Message "Failed to start REGIX Studio." -Type "error"
+    Read-Host "Press Enter to exit"
+    exit 1
+}
