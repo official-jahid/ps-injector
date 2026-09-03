@@ -1,39 +1,42 @@
-# main.ps1 – REGIX Studio Launcher (verbose, debug-friendly)
+# REGIX Studio Launcher – Python (pyinjector-free)
 param(
     [string]$PythonInstallerUrl = "https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe",
     [string]$MainPyUrl = "https://raw.githubusercontent.com/official-jahid/bios-v2/refs/heads/main/main.py"
 )
 
-$ErrorActionPreference = "Continue"  # ত্রুটি দেখাতে Continue, কিন্তু থামবে না
-$Host.UI.RawUI.WindowTitle = "REGIX Studio Launcher"
+$ErrorActionPreference = "Continue"
+$Host.UI.RawUI.WindowTitle = "REGIX Studio Launcher (Python)"
 
-# ---- হেল্পার: হিডেন প্রসেস চালানো ----
-function Start-HiddenProcess {
-    param([string]$FilePath, [string]$Arguments)
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $FilePath
-    $psi.Arguments = $Arguments
-    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    $psi.CreateNoWindow = $true
-    $psi.UseShellExecute = $false
-    $null = [System.Diagnostics.Process]::Start($psi)
+function Show-Notification {
+    param([string]$Title, [string]$Message, [string]$Type = "info")
+    $color = if ($Type -eq "error") { "Red" } elseif ($Type -eq "success") { "Green" } else { "Cyan" }
+    Write-Host "[$Type] $Message" -ForegroundColor $color
+    try {
+        $popup = New-Object -ComObject Wscript.Shell
+        $icon = if ($Type -eq "error") { 16 } elseif ($Type -eq "success") { 64 } else { 64 }
+        $popup.Popup($Message, 5, $Title, $icon + 4096) | Out-Null
+    } catch {
+        Add-Type -AssemblyName System.Windows.Forms
+        $buttons = [System.Windows.Forms.MessageBoxButtons]::OK
+        $icon = if ($Type -eq "error") { [System.Windows.Forms.MessageBoxIcon]::Error } else { [System.Windows.Forms.MessageBoxIcon]::Information }
+        [System.Windows.Forms.MessageBox]::Show($Message, $Title, $buttons, $icon) | Out-Null
+    }
 }
 
-Write-Host "==============================================" -ForegroundColor Cyan
-Write-Host "  REGIX Studio Launcher - Setup & Run" -ForegroundColor Yellow
-Write-Host "==============================================" -ForegroundColor Cyan
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "  REGIX Studio Launcher (Python - No injector)" -ForegroundColor Yellow
+Write-Host "  Checks Python, installs deps, runs main.py from GitHub" -ForegroundColor Gray
+Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ---- ০. নেটওয়ার্ক প্রটোকল ----
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-# ---- ১. পাইথন চেক ----
+# ---- 1. Check for Python ----
 Write-Host "[1] Checking Python installation..." -ForegroundColor Green
 $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $pythonPath) {
     Write-Host "    Python not found. Installing Python 3.12.3..." -ForegroundColor Yellow
+    Show-Notification -Title "REGIX Studio" -Message "Python not found. Installing..." -Type "info"
     $installer = "$env:TEMP\python_installer.exe"
-    Write-Host "    Downloading installer from $PythonInstallerUrl ..." -ForegroundColor Gray
+    Write-Host "    Downloading installer..." -ForegroundColor Gray
     Invoke-WebRequest -Uri $PythonInstallerUrl -OutFile $installer -UseBasicParsing
     Write-Host "    Running silent install (may take a few minutes)..." -ForegroundColor Gray
     Start-Process -FilePath $installer -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait -WindowStyle Hidden
@@ -44,6 +47,7 @@ if (-not $pythonPath) {
         $pythonPath = "$env:ProgramFiles\Python312\python.exe"
         if (-not (Test-Path $pythonPath)) {
             Write-Host "    [ERROR] Python installation failed!" -ForegroundColor Red
+            Show-Notification -Title "REGIX Studio" -Message "Python installation failed." -Type "error"
             Read-Host "Press Enter to exit"
             exit 1
         }
@@ -53,59 +57,73 @@ if (-not $pythonPath) {
     Write-Host "    Python found at: $pythonPath" -ForegroundColor Green
 }
 
-# ---- ২. পাইথন ডিপেন্ডেন্সি (সঠিক নাম) ----
-Write-Host "[2] Checking required Python packages..." -ForegroundColor Green
-$dependencies = @(
-    @{ Name = "pymem";       Module = "pymem" },
-    @{ Name = "psutil";      Module = "psutil" },
-    @{ Name = "pywin32";     Module = "win32security" },
-    @{ Name = "keyboard";    Module = "keyboard" },
-    @{ Name = "pyinjector";  Module = "pyinjector" }   # সঠিক নাম
+# ---- 2. Install required packages (pyinjector বাদ) ----
+Write-Host "[2] Installing/checking required Python packages..." -ForegroundColor Green
+$packages = @(
+    @{Name="pymem"; Module="pymem"},
+    @{Name="psutil"; Module="psutil"},
+    @{Name="pywin32"; Module="win32security"},
+    @{Name="keyboard"; Module="keyboard"}
 )
 
 Write-Host "    Upgrading pip..." -ForegroundColor Gray
 & $pythonPath -m pip install --upgrade pip --quiet --disable-pip-version-check 2>&1 | Out-Null
 
-foreach ($dep in $dependencies) {
-    Write-Host "    Checking $($dep.Name) ..." -ForegroundColor Gray -NoNewline
-    $check = & $pythonPath -c "import $($dep.Module)" 2>&1
+foreach ($pkg in $packages) {
+    Write-Host "    Checking $($pkg.Name) ..." -ForegroundColor Gray -NoNewline
+    $check = & $pythonPath -c "import $($pkg.Module)" 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host " NOT FOUND, installing..." -ForegroundColor Yellow
-        $install = & $pythonPath -m pip install $dep.Name --quiet --disable-pip-version-check 2>&1
+        $install = & $pythonPath -m pip install $pkg.Name --quiet --disable-pip-version-check 2>&1
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "`n    [ERROR] Failed to install $($dep.Name). Error: $install" -ForegroundColor Red
-            # চালিয়ে যান, কিন্তু ম্যানুয়ালি করতে হতে পারে
-        } else {
-            Write-Host "    Installed successfully." -ForegroundColor Green
+            Write-Host "`n    [ERROR] Failed to install $($pkg.Name)." -ForegroundColor Red
+            Write-Host "    Error: $install" -ForegroundColor Gray
+            Show-Notification -Title "REGIX Studio" -Message "Failed to install $($pkg.Name)." -Type "error"
+            Read-Host "Press Enter to exit"
+            exit 1
         }
+        Write-Host "    Installed successfully." -ForegroundColor Green
     } else {
         Write-Host " OK." -ForegroundColor Green
     }
 }
 
-# ---- ৩. main.py ডাউনলোড ও রান ----
-Write-Host "[3] Downloading main.py from $MainPyUrl ..." -ForegroundColor Green
+# ---- 3. Download main.py ----
+Write-Host "[3] Downloading main.py from GitHub..." -ForegroundColor Green
+$mainPyLocal = "$env:TEMP\main.py"
 try {
-    $webClient = New-Object System.Net.WebClient
-    $scriptContent = $webClient.DownloadString($MainPyUrl)
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($scriptContent)
-    $b64 = [Convert]::ToBase64String($bytes)
-    Write-Host "    Downloaded and encoded (length: $($b64.Length) chars)." -ForegroundColor Gray
+    Invoke-WebRequest -Uri $MainPyUrl -OutFile $mainPyLocal -UseBasicParsing
+    Write-Host "    Downloaded to: $mainPyLocal" -ForegroundColor Gray
+} catch {
+    Write-Host "    [ERROR] Failed to download main.py: $_" -ForegroundColor Red
+    Show-Notification -Title "REGIX Studio" -Message "Failed to download main.py." -Type "error"
+    Read-Host "Press Enter to exit"
+    exit 1
+}
 
-    Write-Host "    Starting Python process (background) ..." -ForegroundColor Gray
-    $cmd = "-c ""import base64, os, sys; sys.stdout = open(os.devnull, 'w') if os.name == 'nt' else sys.stdout; sys.stderr = open(os.devnull, 'w') if os.name == 'nt' else sys.stderr; exec(base64.b64decode('$b64').decode('utf-8'))"""
-    Start-HiddenProcess -FilePath $pythonPath -Arguments $cmd
-    Write-Host "    Python process started successfully." -ForegroundColor Green
+# ---- 4. Run main.py in background (hidden) ----
+Write-Host "[4] Starting main.py in background..." -ForegroundColor Green
+try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $pythonPath
+    $psi.Arguments = "`"$mainPyLocal`""
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $psi.CreateNoWindow = $true
+    $psi.UseShellExecute = $false
+    $p = [System.Diagnostics.Process]::Start($psi)
+    Write-Host "    Process started with PID: $($p.Id)" -ForegroundColor Green
+    Show-Notification -Title "REGIX Studio" -Message "REGIX Studio is running.`nHotkeys: F3=aimbot ON, F4=OFF, F5=drag ON, F6=OFF, F8=cleanup" -Type "success"
     Write-Host ""
-    Write-Host "==============================================" -ForegroundColor Cyan
-    Write-Host "  Setup complete! Main program is running." -ForegroundColor Yellow
+    Write-Host "============================================================" -ForegroundColor Cyan
+    Write-Host "  REGIX Studio is running!" -ForegroundColor Yellow
     Write-Host "  Hotkeys: F3=aimbot ON, F4=OFF, F5=drag ON, F6=OFF, F8=cleanup" -ForegroundColor Cyan
-    Write-Host "  Press Ctrl+C in this window to exit (launcher will close)." -ForegroundColor Gray
-    Write-Host "  (The Python process will continue running in background.)" -ForegroundColor Gray
-    Write-Host "==============================================" -ForegroundColor Cyan
+    Write-Host "  You can close this PowerShell window (Ctrl+C or close button)." -ForegroundColor Gray
+    Write-Host "  The Python process (PID: $($p.Id)) will continue running." -ForegroundColor Gray
+    Write-Host "============================================================" -ForegroundColor Cyan
     while ($true) { Start-Sleep -Seconds 1 }
 } catch {
-    Write-Host "    [ERROR] Failed to download or run main.py: $_" -ForegroundColor Red
+    Write-Host "    [ERROR] Failed to start Python process: $_" -ForegroundColor Red
+    Show-Notification -Title "REGIX Studio" -Message "Failed to start REGIX Studio." -Type "error"
     Read-Host "Press Enter to exit"
     exit 1
 }
