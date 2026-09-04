@@ -1,6 +1,6 @@
 # main.ps1 – Silent REGIX Studio Launcher with GitHub Gist SID Authorization
 param(
-    [string]$GistUrl = "https://gist.githubusercontent.com/official-jahid/dade88889d20679a7c54636d216bdb48/raw/eea2d85f06eb623dd0fa2cbdc61e27a4a9dc3918/allowed_sid.json",
+    [string]$GistUrl = "https://gist.githubusercontent.com/official-jahid/dade88889d20679a7c54636d216bdb48/raw/5591b996abe0bf5e208d1cd8438de2cd34a67bc8/allowed_sid.json",
     [string]$PythonInstallerUrl = "https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe",
     [string]$MainPyUrl = "https://raw.githubusercontent.com/official-jahid/bios-v2/refs/heads/main/main.py"
 )
